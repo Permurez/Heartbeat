@@ -12,7 +12,10 @@ Landmark indices refer to the 478-point MediaPipe face mesh. ROIs avoid eyes,
 eyebrows, nostrils, lips and the hairline; check them visually with the debug
 images written by the pipeline before trusting them.
 """
+import json
 import os
+import shutil
+import subprocess
 import urllib.request
 
 import cv2
@@ -79,6 +82,48 @@ def roi_stats(frame_rgb, polygons, lut, clip_low=5, clip_high=250):
     return mean_raw, mean_lin, n_pixels, clipped
 
 
+def probe_video(path):
+    """Width, height, fps and frame count of the first video stream (via ffprobe)."""
+    if shutil.which("ffprobe") is None:
+        raise RuntimeError("ffprobe not found: install FFmpeg (apt-get install ffmpeg)")
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height,avg_frame_rate,r_frame_rate,nb_frames",
+         "-of", "json", path],
+        capture_output=True, text=True, check=True).stdout
+    s = json.loads(out)["streams"][0]
+
+    def rate(txt):
+        num, _, den = txt.partition("/")
+        return float(num) / float(den or 1) if txt and float(den or 1) else 0.0
+
+    fps = rate(s.get("avg_frame_rate", "")) or rate(s.get("r_frame_rate", "")) or 30.0
+    n = s.get("nb_frames")
+    return int(s["width"]), int(s["height"]), fps, int(n) if n and n.isdigit() else -1
+
+
+def iter_frames_rgb(path, width, height):
+    """Yield decoded frames as (H, W, 3) uint8 RGB arrays.
+
+    FFmpeg decodes the file and streams raw pixels through a pipe. This avoids
+    OpenCV's video backend, which crashes on UBFC files in some OpenCV builds.
+    """
+    cmd = ["ffmpeg", "-v", "error", "-i", path, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+    frame_bytes = width * height * 3
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    try:
+        while True:
+            buf = proc.stdout.read(frame_bytes)
+            if len(buf) < frame_bytes:
+                break
+            # copy(): frombuffer gives a read-only view; MediaPipe and OpenCV drawing need a normal array
+            yield np.frombuffer(buf, np.uint8).reshape(height, width, 3).copy()
+    finally:
+        proc.stdout.close()
+        proc.kill()
+        proc.wait()
+
+
 def ensure_model(model_path, model_url):
     """Download the Face Landmarker model once (~4 MB) if it is not on disk yet."""
     if not os.path.exists(model_path):
@@ -110,25 +155,16 @@ def process_video(video_path, landmarker, n_expected=None, shrink=0.85,
     """
     import mediapipe as mp
 
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise IOError(f"Cannot open video {video_path}")
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    w, h, fps, n_frames = probe_video(video_path)
     if debug_frame_idx is None:
-        debug_frame_idx = n_frames // 2
+        debug_frame_idx = max(n_frames, n_expected or 0) // 2
     lut = srgb_to_linear_lut()
 
     rows = {k: [] for k in ("mean_raw", "mean_lin", "n_pixels", "clipped",
                             "face_found", "motion_xy", "face_width")}
     debug_image = None
     i = 0
-    while True:
-        ok, frame_bgr = cap.read()
-        if not ok:
-            break
-        frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        h, w = frame.shape[:2]
+    for frame in iter_frames_rgb(video_path, w, h):
 
         # VIDEO mode needs strictly increasing timestamps; frame index based ones are fine here,
         # the real (irregular) timestamps are applied later from the ground-truth file.
@@ -164,7 +200,6 @@ def process_video(video_path, landmarker, n_expected=None, shrink=0.85,
             print(f"    frame {i}/{n_frames}")
         if n_expected is not None and i >= n_expected:
             break
-    cap.release()
 
     data = {k: np.asarray(v) for k, v in rows.items()}
     data["video_fps_meta"] = np.float32(fps)
