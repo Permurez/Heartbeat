@@ -1,0 +1,7 @@
+numpy
+scipy
+pandas
+opencv-python
+matplotlib
+mediapipe>=0.10.20
+pytest
