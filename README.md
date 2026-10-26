@@ -10,6 +10,7 @@ Semester project for *Grafika i GUI* (G2UI), Wrocław University of Science and 
 - [ ] rPPG methods (GREEN, CHROM, POS, head motion)
 - [ ] Fusion + evaluation (MAE, RMSE, Pearson r, Bland-Altman)
 - [ ] Multi-person tracking
+- [x] Eulerian Video Magnification (colour + motion) and a 3-panel demo video (`rppg/evm.py`, `rppg/demo.py`)
 - [ ] GUI (live preview, per-face BPM, signal plots, EVM view)
 
 ## Data pipeline
@@ -41,6 +42,9 @@ Design decisions:
 ## Usage (Google Colab)
 
 Open `notebooks/02_build_cache.ipynb` in Colab.
+
+Progress figure: `%run scripts/progress_figure.py`.
+Demo video: `rppg.demo.make_demo_video(Config(), 'subject1')`.
 
 ## Tests
 

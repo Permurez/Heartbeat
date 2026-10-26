@@ -110,7 +110,9 @@ def iter_frames_rgb(path, width, height):
     """
     cmd = ["ffmpeg", "-v", "error", "-i", path, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
     frame_bytes = width * height * 3
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    # stderr is silenced: stopping early (we only need part of a video) makes FFmpeg
+    # print a harmless 'Broken pipe' message.
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     try:
         while True:
             buf = proc.stdout.read(frame_bytes)
