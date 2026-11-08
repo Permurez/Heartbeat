@@ -1,7 +1,7 @@
-numpy
-scipy
-pandas
-opencv-python
-matplotlib
+numpy>=1.26
+scipy>=1.11
+pandas>=2.0
+opencv-python>=4.8
+matplotlib>=3.7
 mediapipe>=0.10.20
-pytest
+pytest>=7.4

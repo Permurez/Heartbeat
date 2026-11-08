@@ -7,7 +7,7 @@ Semester project for *Grafika i GUI* (G2UI), Wrocław University of Science and 
 ## Status
 
 - [x] Data layer: UBFC-rPPG loading, timestamp cleaning, resampling, ROI extraction, quality-controlled windows
-- [ ] rPPG methods (GREEN, CHROM, POS, head motion)
+- [x] rPPG methods: GREEN, CHROM, POS (`rppg/methods.py`); head-motion-based method still missing
 - [ ] Fusion + evaluation (MAE, RMSE, Pearson r, Bland-Altman)
 - [ ] Multi-person tracking
 - [x] Eulerian Video Magnification (colour + motion) and a 3-panel demo video (`rppg/evm.py`, `rppg/demo.py`)
@@ -41,7 +41,13 @@ Design decisions:
 
 ## Usage (Google Colab)
 
-Open `notebooks/02_build_cache.ipynb` in Colab.
+Open `notebooks/02_build_cache.ipynb` in Colab to build the cache (`cache/*.npz`,
+`cache/windows.csv`) from the raw dataset.
+
+Open `notebooks/03_presentation.ipynb` for the full walkthrough: why skin colour pulses,
+loading UBFC-rPPG, face/ROI detection, raw signal, filtering, GREEN/CHROM/POS with the maths
+behind each, frequency-domain BPM estimation checked against the reference sensor, and an
+Eulerian Video Magnification demo video.
 
 Progress figure: `%run scripts/progress_figure.py`.
 Demo video: `rppg.demo.make_demo_video(Config(), 'subject1')`.
@@ -63,6 +69,7 @@ Pattern Recognition Letters, 2019. The dataset is not redistributed in this repo
 
 ## AI assistance
 
-In line with university guidelines: the code in `rppg/` and `tests/` of the data layer was
-drafted with an AI assistant (Claude, Anthropic) and reviewed, run and validated by the author.
-Commits containing AI-generated code are marked in their commit messages.
+In line with university guidelines: the code in `rppg/` and `tests/`, and the presentation
+notebook (`notebooks/03_presentation.ipynb`), were drafted with an AI assistant (Claude,
+Anthropic) and reviewed, run and validated by the author. Commits containing AI-generated
+code are marked in their commit messages.

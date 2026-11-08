@@ -6,3 +6,4 @@ __pycache__/
 *.avi
 *.zip
 .ipynb_checkpoints/
+*.pdf
