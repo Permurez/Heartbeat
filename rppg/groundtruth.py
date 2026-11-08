@@ -14,8 +14,9 @@ def bandpass(signal, sample_rate_hz, low_cutoff_hz, high_cutoff_hz, order=3):
     """Zero-phase Butterworth band-pass (filtfilt runs the filter forward and backward)."""
     filter_numerator, filter_denominator = butter(
         order, [low_cutoff_hz, high_cutoff_hz], btype="bandpass", fs=sample_rate_hz)
-    return filtfilt(filter_numerator, filter_denominator, signal,
-                    padlen=min(3 * max(len(filter_denominator), len(filter_numerator)), len(signal) - 1))
+    filter_length = max(len(filter_numerator), len(filter_denominator))
+    edge_padding = min(3 * filter_length, len(signal) - 1)   # filtfilt needs room to pad both edges
+    return filtfilt(filter_numerator, filter_denominator, signal, padlen=edge_padding)
 
 
 def hr_spectral(signal, sample_rate_hz, heart_rate_min_bpm=42.0, heart_rate_max_bpm=180.0, fft_length=2 ** 14):
@@ -44,6 +45,9 @@ def hr_peaks(signal, sample_rate_hz, heart_rate_max_bpm=180.0):
 
 def reference_hr(ppg_window, sample_rate_hz, heart_rate_min_bpm=42.0, heart_rate_max_bpm=180.0):
     """Filter a reference PPG window and return (hr_spectral, hr_peaks)."""
-    filtered = bandpass(ppg_window, sample_rate_hz, heart_rate_min_bpm / 60, heart_rate_max_bpm / 60)
-    return (hr_spectral(filtered, sample_rate_hz, heart_rate_min_bpm, heart_rate_max_bpm),
-            hr_peaks(filtered, sample_rate_hz, heart_rate_max_bpm))
+    low_cutoff_hz = heart_rate_min_bpm / 60
+    high_cutoff_hz = heart_rate_max_bpm / 60
+    filtered = bandpass(ppg_window, sample_rate_hz, low_cutoff_hz, high_cutoff_hz)
+    hr_from_spectrum_bpm = hr_spectral(filtered, sample_rate_hz, heart_rate_min_bpm, heart_rate_max_bpm)
+    hr_from_beats_bpm = hr_peaks(filtered, sample_rate_hz, heart_rate_max_bpm)
+    return hr_from_spectrum_bpm, hr_from_beats_bpm
