@@ -25,7 +25,7 @@ def test_nan_dropped_and_backward_sorted():
 def test_multidimensional_shape_preserved():
     t = np.linspace(0, 1, 31)
     x = np.random.rand(31, 3, 3)
-    t_new, x_new, valid, _ = resample_uniform(t, x, fs=30)
+    t_new, x_new, valid, _ = resample_uniform(t, x, sample_rate_hz=30)
     assert x_new.shape == (len(t_new), 3, 3)
     assert valid.all()
 
@@ -37,7 +37,7 @@ def test_resampling_recovers_sine_and_flags_gap(method):
     keep = (t < 10) | (t > 10.3)                          # 300 ms of dropped frames
     t = t[keep]
     x = np.sin(2 * np.pi * 1.5 * t)
-    t_new, x_new, valid, rep = resample_uniform(t, x, fs=30, method=method, max_gap=0.1)
+    t_new, x_new, valid, rep = resample_uniform(t, x, sample_rate_hz=30, method=method, max_gap_s=0.1)
     assert np.allclose(np.diff(t_new), 1 / 30)
     assert rep["gaps_over_max"] == 1
     assert not valid[(t_new > 10.05) & (t_new < 10.25)].any()
@@ -48,6 +48,6 @@ def test_resampling_recovers_sine_and_flags_gap(method):
 def test_shared_grid_marks_outside_range_invalid():
     t = np.linspace(1, 2, 31)
     grid = np.arange(0, 3, 1 / 30)
-    _, x_new, valid, _ = resample_uniform(t, t, t_grid=grid)
+    _, x_new, valid, _ = resample_uniform(t, t, time_grid_s=grid)
     assert not valid[grid < 1].any() and not valid[grid > 2].any()
     assert np.isfinite(x_new).all()

@@ -17,12 +17,12 @@ class Config:
                       "face_landmarker/float16/1/face_landmarker.task")
 
     # --- Resampling --------------------------------------------------------
-    fs: float = 30.0          # uniform sampling rate after resampling [Hz]
-    max_gap: float = 0.1      # gaps longer than this [s] are marked as "interpolated, not measured"
+    sample_rate_hz: float = 30.0   # uniform sampling rate after resampling [Hz]
+    max_gap_s: float = 0.1         # gaps longer than this [s] are marked as "interpolated, not measured"
 
     # --- Heart-rate band ---------------------------------------------------
-    hr_min_bpm: float = 42.0  # 0.7 Hz
-    hr_max_bpm: float = 180.0 # 3.0 Hz
+    heart_rate_min_bpm: float = 42.0  # 0.7 Hz
+    heart_rate_max_bpm: float = 180.0 # 3.0 Hz
 
     # --- ROI extraction ----------------------------------------------------
     roi_shrink: float = 0.85  # shrink ROI polygons toward their centre to stay away from edges

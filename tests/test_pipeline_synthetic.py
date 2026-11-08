@@ -13,10 +13,10 @@ import pandas as pd
 
 from rppg import Config, pipeline, roi
 
-HR_BPM = 84.0
-FPS = 30.0
+HEART_RATE_BPM = 84.0
+SAMPLE_RATE_HZ = 30.0
 N_FRAMES = 450                # 15 s
-H, W = 240, 320
+FRAME_HEIGHT_PX, FRAME_WIDTH_PX = 240, 320
 
 
 class FakeLandmarker:
@@ -26,11 +26,11 @@ class FakeLandmarker:
         rng = np.random.default_rng(1)
         pts = np.column_stack([rng.uniform(0.35, 0.65, 478), rng.uniform(0.3, 0.7, 478)])
         self.landmarks = [SimpleNamespace(x=float(x), y=float(y)) for x, y in pts]
-        self.miss, self.calls, self.last_ts = set(miss), 0, -1
+        self.miss, self.calls, self.last_frame_timestamp_ms = set(miss), 0, -1
 
-    def detect_for_video(self, image, timestamp_ms):
-        assert timestamp_ms > self.last_ts, "timestamps must increase"
-        self.last_ts = timestamp_ms
+    def detect_for_video(self, image, frame_timestamp_ms):
+        assert frame_timestamp_ms > self.last_frame_timestamp_ms, "timestamps must increase"
+        self.last_frame_timestamp_ms = frame_timestamp_ms
         i, self.calls = self.calls, self.calls + 1
         return SimpleNamespace(face_landmarks=[] if i in self.miss else [self.landmarks])
 
@@ -40,21 +40,23 @@ class FakeLandmarker:
 
 def make_dataset(tmp_path):
     rng = np.random.default_rng(0)
-    t = np.cumsum(np.r_[0, rng.uniform(0.028, 0.039, N_FRAMES - 1)])
-    t[200] = t[199]                                    # duplicated log entry
-    t[300:] += 0.25                                    # dropped frames -> gap
-    pulse = np.sin(2 * np.pi * HR_BPM / 60 * t)
+    timestamps_s = np.cumsum(np.r_[0, rng.uniform(0.028, 0.039, N_FRAMES - 1)])
+    timestamps_s[200] = timestamps_s[199]                                    # duplicated log entry
+    timestamps_s[300:] += 0.25                                               # dropped frames -> gap
+    pulse = np.sin(2 * np.pi * HEART_RATE_BPM / 60 * timestamps_s)
 
     sdir = tmp_path / "subject1"
     sdir.mkdir()
-    vw = cv2.VideoWriter(str(sdir / "vid.avi"), cv2.VideoWriter_fourcc(*"FFV1"), FPS, (W, H))
+    video_writer = cv2.VideoWriter(str(sdir / "vid.avi"), cv2.VideoWriter_fourcc(*"FFV1"),
+                                   SAMPLE_RATE_HZ, (FRAME_WIDTH_PX, FRAME_HEIGHT_PX))
     for p in pulse:
-        frame = np.full((H, W, 3), (90, 120, 160), np.uint8)       # BGR background
+        frame = np.full((FRAME_HEIGHT_PX, FRAME_WIDTH_PX, 3), (90, 120, 160), np.uint8)   # BGR background
         skin = np.clip(np.array([110, 140 + 4 * p, 190]), 0, 255).astype(np.uint8)
         frame[60:180, 100:220] = skin
-        vw.write(frame)
-    vw.release()
-    np.savetxt(sdir / "ground_truth.txt", np.vstack([pulse, np.full_like(t, HR_BPM), t]))
+        video_writer.write(frame)
+    video_writer.release()
+    np.savetxt(sdir / "ground_truth.txt",
+              np.vstack([pulse, np.full_like(timestamps_s, HEART_RATE_BPM), timestamps_s]))
 
     zpath = tmp_path / "ubfc.zip"
     with zipfile.ZipFile(zpath, "w") as zf:
@@ -88,15 +90,15 @@ def test_pipeline_end_to_end(tmp_path, monkeypatch):
 
     # Green channel of the ROI must carry the pulse at the right frequency
     from rppg.groundtruth import hr_spectral
-    green = res["rgb_raw"][:, 0, 1]
-    assert abs(hr_spectral(green, cfg.fs) - HR_BPM) < 1.5
+    green_trace = res["rgb_raw"][:, 0, 1]
+    assert abs(hr_spectral(green_trace, cfg.sample_rate_hz) - HEART_RATE_BPM) < 1.5
 
     df = pipeline.build_window_table(cfg)
     assert os.path.exists(os.path.join(cfg.cache_dir, "windows.csv"))
-    duration = res["t"][-1] - res["t"][0]
+    duration = res["timestamps_s"][-1] - res["timestamps_s"][0]
     assert len(df) == int(np.floor((duration - cfg.window_s) / cfg.step_s)) + 1
     print(df.to_string())
-    assert (abs(df["hr_gt"] - HR_BPM) < 1.5).all()
+    assert (abs(df["reference_heart_rate_bpm"] - HEART_RATE_BPM) < 1.5).all()
     assert df["accepted"].any()
     assert pd.api.types.is_bool_dtype(df["accepted"])
 

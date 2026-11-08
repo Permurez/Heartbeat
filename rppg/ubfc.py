@@ -22,14 +22,15 @@ def list_subjects(zip_path):
 
 
 def load_ground_truth(zip_path, subject):
-    """Return (ppg, hr, t): reference waveform, oximeter HR [BPM], timestamps [s]."""
+    """Return (ppg, oximeter_heart_rate_bpm, timestamps_s): reference waveform, oximeter HR [BPM],
+    timestamps [s]."""
     with zipfile.ZipFile(zip_path) as zf:
         text = zf.read(f"{subject}/ground_truth.txt").decode()
     rows = [np.array(line.split(), dtype=float) for line in text.strip().splitlines()]
     if len(rows) != 3:
         raise ValueError(f"{subject}: expected 3 rows in ground_truth.txt, got {len(rows)}")
-    ppg, hr, t = rows
-    return ppg, hr, t
+    ppg, oximeter_heart_rate_bpm, timestamps_s = rows
+    return ppg, oximeter_heart_rate_bpm, timestamps_s
 
 
 @contextmanager

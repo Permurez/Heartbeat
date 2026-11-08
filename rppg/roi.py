@@ -48,82 +48,84 @@ def shrink_polygon(points, factor):
 
 def roi_polygons(landmarks_px, shrink=0.85):
     """Convex hull polygons (int32, OpenCV format) for every ROI from (478, 2) pixel landmarks."""
-    polys = {}
-    for name, idx in ROI_LANDMARKS.items():
-        pts = shrink_polygon(landmarks_px[idx], shrink)
-        polys[name] = cv2.convexHull(np.round(pts).astype(np.int32))
-    return polys
+    roi_shapes = {}
+    for name, landmark_indices in ROI_LANDMARKS.items():
+        polygon_points = shrink_polygon(landmarks_px[landmark_indices], shrink)
+        roi_shapes[name] = cv2.convexHull(np.round(polygon_points).astype(np.int32))
+    return roi_shapes
 
 
-def roi_stats(frame_rgb, polygons, lut, clip_low=5, clip_high=250):
+def roi_stats(frame_rgb, roi_shapes, lut, clip_low=5, clip_high=250):
     """Colour statistics of each ROI polygon in one RGB frame.
 
     Returns arrays ordered like ROI_NAMES:
-      mean_raw (R, 3), mean_lin (R, 3), n_pixels (R,), clipped (R,)
+      mean_raw (R, 3), mean_lin (R, 3), pixel_count (R,), clipped_fraction (R,)
     """
-    h, w = frame_rgb.shape[:2]
-    n = len(ROI_NAMES)
-    mean_raw = np.full((n, 3), np.nan, np.float32)
-    mean_lin = np.full((n, 3), np.nan, np.float32)
-    n_pixels = np.zeros(n, np.int32)
-    clipped = np.full(n, np.nan, np.float32)
+    frame_height_px, frame_width_px = frame_rgb.shape[:2]
+    n_roi = len(ROI_NAMES)
+    mean_raw = np.full((n_roi, 3), np.nan, np.float32)
+    mean_lin = np.full((n_roi, 3), np.nan, np.float32)
+    pixel_count = np.zeros(n_roi, np.int32)
+    clipped_fraction = np.full(n_roi, np.nan, np.float32)
 
     for i, name in enumerate(ROI_NAMES):
-        mask = np.zeros((h, w), np.uint8)
-        cv2.fillConvexPoly(mask, polygons[name], 1)
-        pix = frame_rgb[mask.astype(bool)]                 # (P, 3) uint8
-        if len(pix) == 0:
+        roi_mask = np.zeros((frame_height_px, frame_width_px), np.uint8)
+        cv2.fillConvexPoly(roi_mask, roi_shapes[name], 1)
+        roi_pixel_values = frame_rgb[roi_mask.astype(bool)]        # (P, 3) uint8
+        if len(roi_pixel_values) == 0:
             continue
-        n_pixels[i] = len(pix)
-        mean_raw[i] = pix.mean(axis=0)
-        mean_lin[i] = lut[pix].mean(axis=0)
-        bad = np.any((pix <= clip_low) | (pix >= clip_high), axis=1)
-        clipped[i] = bad.mean()
-    return mean_raw, mean_lin, n_pixels, clipped
+        pixel_count[i] = len(roi_pixel_values)
+        mean_raw[i] = roi_pixel_values.mean(axis=0)
+        mean_lin[i] = lut[roi_pixel_values].mean(axis=0)
+        is_clipped = np.any((roi_pixel_values <= clip_low) | (roi_pixel_values >= clip_high), axis=1)
+        clipped_fraction[i] = is_clipped.mean()
+    return mean_raw, mean_lin, pixel_count, clipped_fraction
 
 
 def probe_video(path):
-    """Width, height, fps and frame count of the first video stream (via ffprobe)."""
+    """Width, height, sample rate [Hz] and frame count of the first video stream (via ffprobe)."""
     if shutil.which("ffprobe") is None:
         raise RuntimeError("ffprobe not found: install FFmpeg (apt-get install ffmpeg)")
-    out = subprocess.run(
+    ffprobe_output = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0",
          "-show_entries", "stream=width,height,avg_frame_rate,r_frame_rate,nb_frames",
          "-of", "json", path],
         capture_output=True, text=True, check=True).stdout
-    s = json.loads(out)["streams"][0]
+    stream_info = json.loads(ffprobe_output)["streams"][0]
 
     def rate(txt):
         num, _, den = txt.partition("/")
         return float(num) / float(den or 1) if txt and float(den or 1) else 0.0
 
-    fps = rate(s.get("avg_frame_rate", "")) or rate(s.get("r_frame_rate", "")) or 30.0
-    n = s.get("nb_frames")
-    return int(s["width"]), int(s["height"]), fps, int(n) if n and n.isdigit() else -1
+    sample_rate_hz = (rate(stream_info.get("avg_frame_rate", ""))
+                      or rate(stream_info.get("r_frame_rate", "")) or 30.0)
+    n_frames = stream_info.get("nb_frames")
+    return (int(stream_info["width"]), int(stream_info["height"]), sample_rate_hz,
+            int(n_frames) if n_frames and n_frames.isdigit() else -1)
 
 
-def iter_frames_rgb(path, width, height):
+def iter_frames_rgb(path, frame_width_px, frame_height_px):
     """Yield decoded frames as (H, W, 3) uint8 RGB arrays.
 
     FFmpeg decodes the file and streams raw pixels through a pipe. This avoids
     OpenCV's video backend, which crashes on UBFC files in some OpenCV builds.
     """
-    cmd = ["ffmpeg", "-v", "error", "-i", path, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
-    frame_bytes = width * height * 3
+    ffmpeg_command = ["ffmpeg", "-v", "error", "-i", path, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+    frame_bytes = frame_width_px * frame_height_px * 3
     # stderr is silenced: stopping early (we only need part of a video) makes FFmpeg
     # print a harmless 'Broken pipe' message.
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    ffmpeg_process = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     try:
         while True:
-            buf = proc.stdout.read(frame_bytes)
-            if len(buf) < frame_bytes:
+            raw_frame_bytes = ffmpeg_process.stdout.read(frame_bytes)
+            if len(raw_frame_bytes) < frame_bytes:
                 break
             # copy(): frombuffer gives a read-only view; MediaPipe and OpenCV drawing need a normal array
-            yield np.frombuffer(buf, np.uint8).reshape(height, width, 3).copy()
+            yield np.frombuffer(raw_frame_bytes, np.uint8).reshape(frame_height_px, frame_width_px, 3).copy()
     finally:
-        proc.stdout.close()
-        proc.kill()
-        proc.wait()
+        ffmpeg_process.stdout.close()
+        ffmpeg_process.kill()
+        ffmpeg_process.wait()
 
 
 def ensure_model(model_path, model_url):
@@ -157,53 +159,58 @@ def process_video(video_path, landmarker, n_expected=None, shrink=0.85,
     """
     import mediapipe as mp
 
-    w, h, fps, n_frames = probe_video(video_path)
+    frame_width_px, frame_height_px, sample_rate_hz, n_frames = probe_video(video_path)
     if debug_frame_idx is None:
         debug_frame_idx = max(n_frames, n_expected or 0) // 2
     lut = srgb_to_linear_lut()
 
-    rows = {k: [] for k in ("mean_raw", "mean_lin", "n_pixels", "clipped",
+    rows = {k: [] for k in ("mean_raw", "mean_lin", "n_pixels", "clipped_fraction",
                             "face_found", "motion_xy", "face_width")}
     debug_image = None
-    i = 0
-    for frame in iter_frames_rgb(video_path, w, h):
+    frame_index = 0
+    for frame in iter_frames_rgb(video_path, frame_width_px, frame_height_px):
 
         # VIDEO mode needs strictly increasing timestamps; frame index based ones are fine here,
         # the real (irregular) timestamps are applied later from the ground-truth file.
         result = landmarker.detect_for_video(
-            mp.Image(image_format=mp.ImageFormat.SRGB, data=frame), int(round(i * 1000 / fps)))
+            mp.Image(image_format=mp.ImageFormat.SRGB, data=frame),
+            int(round(frame_index * 1000 / sample_rate_hz)))
 
         if result.face_landmarks:
-            lm = np.array([(p.x * w, p.y * h) for p in result.face_landmarks[0]], np.float32)
-            polys = roi_polygons(lm, shrink)
-            mr, ml, npx, cl = roi_stats(frame, polys, lut, clip_low, clip_high)
+            landmarks_px = np.array([(p.x * frame_width_px, p.y * frame_height_px)
+                                     for p in result.face_landmarks[0]], np.float32)
+            roi_shapes = roi_polygons(landmarks_px, shrink)
+            mean_raw, mean_lin, pixel_count, clipped_fraction = roi_stats(
+                frame, roi_shapes, lut, clip_low, clip_high)
             rows["face_found"].append(True)
-            rows["motion_xy"].append(lm[MOTION_LANDMARKS])
-            rows["face_width"].append(np.linalg.norm(lm[FACE_EDGE[0]] - lm[FACE_EDGE[1]]))
-            if i == debug_frame_idx:
+            rows["motion_xy"].append(landmarks_px[MOTION_LANDMARKS])
+            rows["face_width"].append(
+                np.linalg.norm(landmarks_px[FACE_EDGE[0]] - landmarks_px[FACE_EDGE[1]]))
+            if frame_index == debug_frame_idx:
                 debug_image = frame.copy()
-                cv2.polylines(debug_image, list(polys.values()), True, (0, 255, 0), 1)
-                for x, y in lm[MOTION_LANDMARKS]:
+                cv2.polylines(debug_image, list(roi_shapes.values()), True, (0, 255, 0), 1)
+                for x, y in landmarks_px[MOTION_LANDMARKS]:
                     cv2.circle(debug_image, (int(x), int(y)), 2, (255, 0, 0), -1)
         else:
-            n = len(ROI_NAMES)
-            mr = ml = np.full((n, 3), np.nan, np.float32)
-            npx, cl = np.zeros(n, np.int32), np.full(n, np.nan, np.float32)
+            n_roi = len(ROI_NAMES)
+            mean_raw = mean_lin = np.full((n_roi, 3), np.nan, np.float32)
+            pixel_count = np.zeros(n_roi, np.int32)
+            clipped_fraction = np.full(n_roi, np.nan, np.float32)
             rows["face_found"].append(False)
             rows["motion_xy"].append(np.full((len(MOTION_LANDMARKS), 2), np.nan, np.float32))
             rows["face_width"].append(np.nan)
 
-        rows["mean_raw"].append(mr)
-        rows["mean_lin"].append(ml)
-        rows["n_pixels"].append(npx)
-        rows["clipped"].append(cl)
-        i += 1
-        if log_every and i % log_every == 0:
-            print(f"    frame {i}/{n_frames}")
-        if n_expected is not None and i >= n_expected:
+        rows["mean_raw"].append(mean_raw)
+        rows["mean_lin"].append(mean_lin)
+        rows["n_pixels"].append(pixel_count)
+        rows["clipped_fraction"].append(clipped_fraction)
+        frame_index += 1
+        if log_every and frame_index % log_every == 0:
+            print(f"    frame {frame_index}/{n_frames}")
+        if n_expected is not None and frame_index >= n_expected:
             break
 
     data = {k: np.asarray(v) for k, v in rows.items()}
-    data["video_fps_meta"] = np.float32(fps)
+    data["video_fps_meta"] = np.float32(sample_rate_hz)
     data["video_frames_meta"] = np.int32(n_frames)
     return data, debug_image

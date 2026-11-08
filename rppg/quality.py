@@ -16,8 +16,8 @@ def head_motion(motion_xy, face_width):
     centroid = np.nanmean(motion_xy, axis=1)                  # (T, 2)
     if np.all(np.isnan(centroid)):
         return float("nan")
-    disp = centroid - np.nanmean(centroid, axis=0)
-    return float(np.nanstd(np.linalg.norm(disp, axis=1)) / np.nanmedian(face_width))
+    displacement = centroid - np.nanmean(centroid, axis=0)
+    return float(np.nanstd(np.linalg.norm(displacement, axis=1)) / np.nanmedian(face_width))
 
 
 def build_windows(subject, raw, res, cfg):
@@ -26,40 +26,43 @@ def build_windows(subject, raw, res, cfg):
     raw: per-frame cache (dict from the .npz file), res: resampled dict (see pipeline.resample_subject).
     Returns a list of dicts, one per window.
     """
-    t, t_raw = res["t"], raw["t"]
+    timestamps_s, raw_timestamps_s = res["timestamps_s"], raw["timestamps_s"]
     rows = []
-    starts = np.arange(t[0], t[-1] - cfg.window_s + 1e-9, cfg.step_s)
-    for k, s in enumerate(starts):
-        e = s + cfg.window_s
-        g = (t >= s) & (t < e)                  # samples on the uniform grid
-        r = (t_raw >= s) & (t_raw < e)          # original frames
+    window_starts_s = np.arange(timestamps_s[0], timestamps_s[-1] - cfg.window_s + 1e-9, cfg.step_s)
+    for window_index, window_start_s in enumerate(window_starts_s):
+        window_end_s = window_start_s + cfg.window_s
+        in_window_grid_mask = (timestamps_s >= window_start_s) & (timestamps_s < window_end_s)
+        in_window_frame_mask = (raw_timestamps_s >= window_start_s) & (raw_timestamps_s < window_end_s)
 
-        gap_frac = float(1 - res["valid_video"][g].mean())
-        gt_gap_frac = float(1 - res["valid_gt"][g].mean())
-        face_missing = float(1 - raw["face_found"][r].mean())
-        clipped = float(np.nanmean(raw["clipped"][r])) if raw["face_found"][r].any() else float("nan")
-        motion = head_motion(res["motion_xy"][g], res["face_width"][g])
-        hr_fft, hr_pk = reference_hr(res["ppg"][g], cfg.fs, cfg.hr_min_bpm, cfg.hr_max_bpm)
-        gt_diff = abs(hr_fft - hr_pk)
+        gap_fraction = float(1 - res["valid_video"][in_window_grid_mask].mean())
+        ground_truth_gap_fraction = float(1 - res["valid_gt"][in_window_grid_mask].mean())
+        face_missing_fraction = float(1 - raw["face_found"][in_window_frame_mask].mean())
+        clipped_fraction = (float(np.nanmean(raw["clipped_fraction"][in_window_frame_mask]))
+                           if raw["face_found"][in_window_frame_mask].any() else float("nan"))
+        head_motion_value = head_motion(res["motion_xy"][in_window_grid_mask], res["face_width"][in_window_grid_mask])
+        reference_hr_spectral_bpm, reference_hr_peaks_bpm = reference_hr(
+            res["ppg"][in_window_grid_mask], cfg.sample_rate_hz, cfg.heart_rate_min_bpm, cfg.heart_rate_max_bpm)
+        reference_hr_disagreement_bpm = abs(reference_hr_spectral_bpm - reference_hr_peaks_bpm)
 
         reasons = []
-        if gap_frac > cfg.max_gap_fraction:
+        if gap_fraction > cfg.max_gap_fraction:
             reasons.append("video_gaps")
-        if gt_gap_frac > cfg.max_gap_fraction:
+        if ground_truth_gap_fraction > cfg.max_gap_fraction:
             reasons.append("gt_gaps")
-        if face_missing > cfg.max_face_missing:
+        if face_missing_fraction > cfg.max_face_missing:
             reasons.append("face_missing")
-        if not (clipped <= cfg.max_clipped):          # also catches NaN
+        if not (clipped_fraction <= cfg.max_clipped):          # also catches NaN
             reasons.append("clipped")
-        if not (gt_diff <= cfg.max_gt_disagreement_bpm):
+        if not (reference_hr_disagreement_bpm <= cfg.max_gt_disagreement_bpm):
             reasons.append("gt_unreliable")
 
         rows.append({
-            "subject": subject, "window": k,
-            "t_start": round(float(s), 3), "t_end": round(float(e), 3),
-            "hr_gt": round(hr_fft, 2), "hr_gt_peaks": round(hr_pk, 2),
-            "gap_frac": round(gap_frac, 4), "face_missing": round(face_missing, 4),
-            "clipped": round(clipped, 4), "motion": round(motion, 5),
+            "subject": subject, "window_index": window_index,
+            "window_start_s": round(float(window_start_s), 3), "window_end_s": round(float(window_end_s), 3),
+            "reference_heart_rate_bpm": round(reference_hr_spectral_bpm, 2),
+            "reference_heart_rate_peaks_bpm": round(reference_hr_peaks_bpm, 2),
+            "gap_fraction": round(gap_fraction, 4), "face_missing_fraction": round(face_missing_fraction, 4),
+            "clipped_fraction": round(clipped_fraction, 4), "head_motion": round(head_motion_value, 5),
             "accepted": not reasons, "reject_reasons": ";".join(reasons),
         })
     return rows

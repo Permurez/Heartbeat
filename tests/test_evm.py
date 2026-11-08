@@ -2,7 +2,7 @@ import numpy as np
 
 from rppg.evm import collapse, laplacian_pyramid, magnify_color, magnify_motion
 
-FS = 30.0
+SAMPLE_RATE_HZ = 30.0
 
 
 def test_laplacian_pyramid_reconstructs_exactly():
@@ -11,12 +11,12 @@ def test_laplacian_pyramid_reconstructs_exactly():
 
 
 def test_color_magnification_amplifies_in_band_signal_only():
-    t = np.arange(150) / FS
+    t = np.arange(150) / SAMPLE_RATE_HZ
     pulse = 0.002 * np.sin(2 * np.pi * 1.5 * t)           # 90 BPM, invisible amplitude
     drift = 0.002 * np.sin(2 * np.pi * 0.1 * t)           # out of band
     frames = np.full((150, 64, 64, 3), 0.5, np.float32)
     frames += (pulse + drift)[:, None, None, None].astype(np.float32)
-    out = magnify_color(frames, FS, 1.2, 1.8, alpha=50, levels=3)
+    out = magnify_color(frames, SAMPLE_RATE_HZ, 1.2, 1.8, magnification_gain=50, levels=3)
     trace = out[:, 32, 32, 1] - frames[:, 32, 32, 1]
     core = slice(30, 120)                                  # ignore filter edge effects
     gain = np.std(trace[core]) / np.std(pulse[core])
@@ -24,7 +24,7 @@ def test_color_magnification_amplifies_in_band_signal_only():
 
 
 def test_motion_magnification_enlarges_small_oscillation():
-    t = np.arange(150) / FS
+    t = np.arange(150) / SAMPLE_RATE_HZ
     shift = 0.3 * np.sin(2 * np.pi * 1.5 * t)              # sub-pixel horizontal wobble
     xx = np.arange(128)[None, :]
     frames = []
@@ -33,7 +33,7 @@ def test_motion_magnification_enlarges_small_oscillation():
         img = np.repeat(row, 96, axis=0).astype(np.float32) * 0.6 + 0.2
         frames.append(np.dstack([img] * 3))
     frames = np.stack(frames)
-    out = magnify_motion(frames, FS, 1.2, 1.8, alpha=10, levels=4)
+    out = magnify_motion(frames, SAMPLE_RATE_HZ, 1.2, 1.8, magnification_gain=10, levels=4)
 
     def edge_pos(f):
         prof = f[48, :, 0]
