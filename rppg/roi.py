@@ -41,13 +41,16 @@ def srgb_to_linear_lut():
 
 
 def shrink_polygon(points, factor):
-    """Move polygon vertices toward their centroid; factor=1 keeps it unchanged."""
+    """Move polygon vertices toward their centrum; factor=1 means no changes."""
     centre = points.mean(axis=0)
     return centre + (points - centre) * factor
 
 
 def roi_polygons(landmarks_px, shrink=0.85):
-    """Convex hull polygons (int32, OpenCV format) for every ROI from (478, 2) pixel landmarks."""
+    """Turn the 478 face landmarks in pixels (shape (478, 2)) into one shrunken convex polygon per ROI.
+
+    Returns a dict {roi_name: int32 polygon}, ready for OpenCV (fillConvexPoly, polylines).
+    """
     roi_shapes = {}
     for name, landmark_indices in ROI_LANDMARKS.items():
         polygon_points = shrink_polygon(landmarks_px[landmark_indices], shrink)
@@ -55,13 +58,32 @@ def roi_polygons(landmarks_px, shrink=0.85):
     return roi_shapes
 
 
+def pixels_inside(frame_rgb, polygon):
+    """All pixels of the frame that lie inside one ROI polygon, as a (P, 3) array."""
+    mask = np.zeros(frame_rgb.shape[:2], np.uint8)
+    cv2.fillConvexPoly(mask, polygon, 1)
+    return frame_rgb[mask.astype(bool)]
+
+
+def find_clipped(pixels, clip_low, clip_high):
+    """True for every pixel where any channel is too dark or too bright to change with the pulse."""
+    too_dark = pixels <= clip_low
+    too_bright = pixels >= clip_high
+    return np.any(too_dark | too_bright, axis=1)
+
+
 def roi_stats(frame_rgb, roi_shapes, lut, clip_low=5, clip_high=250):
-    """Colour statistics of each ROI polygon in one RGB frame.
+    """Calculate mean RGB, mean linear RGB, pixel count and clipped fraction for every ROI.
+
+    Clipped pixels (any channel <= clip_low or >= clip_high) cannot change with the pulse,
+    so they are left out of the means; clipped_fraction reports how many there were.
 
     Returns arrays ordered like ROI_NAMES:
-      mean_raw (R, 3), mean_lin (R, 3), pixel_count (R,), clipped_fraction (R,)
+      mean_raw (R, 3)          mean RGB of unclipped pixels, as recorded by the camera
+      mean_lin (R, 3)          the same after undoing the sRGB gamma (linear light)
+      pixel_count (R,)         number of unclipped pixels used for the means
+      clipped_fraction (R,)    share of all ROI pixels that were clipped
     """
-    frame_height_px, frame_width_px = frame_rgb.shape[:2]
     n_roi = len(ROI_NAMES)
     mean_raw = np.full((n_roi, 3), np.nan, np.float32)
     mean_lin = np.full((n_roi, 3), np.nan, np.float32)
@@ -69,19 +91,22 @@ def roi_stats(frame_rgb, roi_shapes, lut, clip_low=5, clip_high=250):
     clipped_fraction = np.full(n_roi, np.nan, np.float32)
 
     for i, name in enumerate(ROI_NAMES):
-        roi_mask = np.zeros((frame_height_px, frame_width_px), np.uint8)
-        cv2.fillConvexPoly(roi_mask, roi_shapes[name], 1)
-        roi_pixel_values = frame_rgb[roi_mask.astype(bool)]        # (P, 3) uint8
-        if len(roi_pixel_values) == 0:
-            continue
-        pixel_count[i] = len(roi_pixel_values)
-        mean_raw[i] = roi_pixel_values.mean(axis=0)
-        mean_lin[i] = lut[roi_pixel_values].mean(axis=0)
-        is_clipped = np.any((roi_pixel_values <= clip_low) | (roi_pixel_values >= clip_high), axis=1)
+        pixels = pixels_inside(frame_rgb, roi_shapes[name])
+        if len(pixels) == 0:
+            continue                                  # ROI outside the frame
+
+        is_clipped = find_clipped(pixels, clip_low, clip_high)
         clipped_fraction[i] = is_clipped.mean()
+
+        good_pixels = pixels[~is_clipped]
+        if len(good_pixels) == 0:
+            continue                                  # whole ROI clipped: no measurement
+
+        pixel_count[i] = len(good_pixels)
+        mean_raw[i] = good_pixels.mean(axis=0)
+        mean_lin[i] = lut[good_pixels].mean(axis=0)
+
     return mean_raw, mean_lin, pixel_count, clipped_fraction
-
-
 def probe_video(path):
     """Width, height, sample rate [Hz] and frame count of the first video stream (via ffprobe)."""
     if shutil.which("ffprobe") is None:

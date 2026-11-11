@@ -3,5 +3,6 @@ scipy>=1.11
 pandas>=2.0
 opencv-python>=4.8
 matplotlib>=3.7
+pillow>=10.0
 mediapipe>=0.10.20
 pytest>=7.4

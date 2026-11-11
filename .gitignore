@@ -7,3 +7,4 @@ __pycache__/
 *.zip
 .ipynb_checkpoints/
 *.pdf
+CLAUDE.md

@@ -12,8 +12,7 @@ from scipy.signal import butter, filtfilt, find_peaks, detrend
 
 def bandpass(signal, sample_rate_hz, low_cutoff_hz, high_cutoff_hz, order=3):
     """Zero-phase Butterworth band-pass (filtfilt runs the filter forward and backward)."""
-    filter_numerator, filter_denominator = butter(
-        order, [low_cutoff_hz, high_cutoff_hz], btype="bandpass", fs=sample_rate_hz)
+    filter_numerator, filter_denominator = butter(order, [low_cutoff_hz, high_cutoff_hz], btype="bandpass", fs=sample_rate_hz) #
     filter_length = max(len(filter_numerator), len(filter_denominator))
     edge_padding = min(3 * filter_length, len(signal) - 1)   # filtfilt needs room to pad both edges
     return filtfilt(filter_numerator, filter_denominator, signal, padlen=edge_padding)
